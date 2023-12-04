@@ -13,6 +13,12 @@
 using namespace std;
 
 #define SIMULATION_END_TIME 1000000
+#define TRUCK_ARRIVE_TIME 60
+#define UNLOADING_TRUCK_PRIORITY 2
+#define LOADING_TRUCK_PRIORITY 4
+
+#define UNLOADING_DELIVERY_TRUCK_PRIORITY 3
+#define LOADING_DELIVERY_TRUCK_PRIORITY 5
 
 Store* fullTimeWorkers;
 Store* partTimeWorkers;
@@ -20,12 +26,10 @@ Store* ramps;
 Store* officialWorkers;
 Store* forklifts;
 
-Queue unloadingDeliveryTruckQueue("Fronta dodávek na vykládku");
-Queue unloadingTruckQueue("Fronta kamionů na vykládku");
-Queue loadingDeliveryTruckQueue("Fronta dodávek na nakládku");
-Queue loadingTruckQueue("Fronta kamionů na nakládku");
-Queue administrationQueue("Fronta na razítko");
-Queue loadingQueue("Fronta na vykládku");
+Queue vehicleQueue;
+
+enum ArriveType {Unloading, Loading};
+
 
 void showHelp() {
     cerr << "Správné použití:" <<
@@ -96,15 +100,79 @@ void parseAllArguments(char ** start, char** end){
     forklifts = new Store("Vysokozdvižné vozíky", option);
 }
 
+class Truck: public Process {
+    private: ArriveType type;
+    public: Truck(Priority_t p, ArriveType type): Process(p) {
+        this->type = type;
+    }
+
+    void Behavior() {
+        while (fullTimeWorkers->Free() < 2 && partTimeWorkers->Free() < 4 && ramps->Free() < 1 && forklifts->Free() <= 1) {
+            Into(vehicleQueue);
+            Passivate();
+        }
+
+        Enter(*fullTimeWorkers, 2);
+        Enter(*partTimeWorkers, 4);
+        Enter(*ramps, 1);
+        Enter(*forklifts, 1);
+
+        Wait(1.0);
+
+        Leave(*fullTimeWorkers);
+        Leave(*partTimeWorkers);
+        Leave(*ramps);
+        Leave(*forklifts);
+
+        if (vehicleQueue.Length()>0) {
+			(vehicleQueue.GetFirst())->Activate();
+		}
+    }
+};
+
+
+class VehicleGenerator: public Event {
+    public: VehicleGenerator(): Event() {}
+    void Behavior() {
+        /* 
+            Periodically generate new Truck process.
+            50% - truck loading
+            50% - truck unloading
+        */
+        if (Random() <= 0.5){
+            DecideVehicle(ArriveType::Unloading);
+        }
+        else{
+            DecideVehicle(ArriveType::Loading);
+        }
+
+        double next = Time + Exponential(TRUCK_ARRIVE_TIME);
+        Activate(next);
+    }
+
+    void DecideVehicle(ArriveType type){
+        Priority_t p;
+        if(Random() <= 0.3){
+            p = type == ArriveType::Unloading ? UNLOADING_DELIVERY_TRUCK_PRIORITY:LOADING_DELIVERY_TRUCK_PRIORITY;
+      //      (new DeliveryTruck(type))->Activate();
+        }else{
+            p = type == ArriveType::Unloading ? UNLOADING_TRUCK_PRIORITY:LOADING_TRUCK_PRIORITY;
+            (new Truck(p, type))->Activate();
+        }
+    }
+};
+
 int main(int argc, char * argv[]) {
     parseAllArguments(argv, argv + argc);
 
     Init(0, SIMULATION_END_TIME); // Initialize simulation
 
+    (new VehicleGenerator())->Activate();
+
     Run(); // Run simulation
 
     cerr << "Finished simulation, printing results" << endl;
-    
+
     ramps->Output();
     fullTimeWorkers->Output();;
     partTimeWorkers->Output();;
