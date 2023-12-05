@@ -123,41 +123,59 @@ public:
     this->officeWorkersAmount = officeWorkersAmount;
   }
 
+  void TryEnter(Store *store, int amount) {
+    if (amount > 0) {
+      Enter(*store, amount);
+    }
+  }
+
+  void TryLeave(Store *store, int amount) {
+    if (amount > 0) {
+      Leave(*store, amount);
+    }
+  }
+
   void EnterStorage() {
-    while (fullTimeWorkers->Free() < fullTimeWorkersAmount &&
-           partTimeWorkers->Free() < partTimeWorkersAmount &&
-           ramps->Free() < rampAmount && forklifts->Free() < forkliftAmount) {
+    while (fullTimeWorkers->Free() < fullTimeWorkersAmount ||
+           partTimeWorkers->Free() < partTimeWorkersAmount ||
+           ramps->Free() < rampAmount || forklifts->Free() < forkliftAmount) {
       Into(storageQueue);
       Passivate();
     }
 
-    Enter(*fullTimeWorkers, fullTimeWorkersAmount);
-    Enter(*partTimeWorkers, partTimeWorkersAmount);
-    Enter(*ramps, rampAmount);
-    Enter(*forklifts, forkliftAmount);
+    TryEnter(fullTimeWorkers, fullTimeWorkersAmount);
+    TryEnter(partTimeWorkers, partTimeWorkersAmount);
+    TryEnter(ramps, rampAmount);
+    TryEnter(forklifts, forkliftAmount);
   }
 
-  void LeaveStorage() {
-    Leave(*partTimeWorkers, this->partTimeWorkersAmount);
-    Leave(*ramps, this->rampAmount);
-    Leave(*forklifts, this->forkliftAmount);
+  void LeaveStorage(int fullTimeWorkersAmountLeave = -1) {
+    fullTimeWorkersAmountLeave = fullTimeWorkersAmountLeave > -1
+                                     ? fullTimeWorkersAmountLeave
+                                     : fullTimeWorkersAmount;
+
+    TryLeave(fullTimeWorkers, fullTimeWorkersAmountLeave);
+    TryLeave(partTimeWorkers, this->partTimeWorkersAmount);
+    TryLeave(ramps, this->rampAmount);
+    TryLeave(forklifts, this->forkliftAmount);
 
     if (storageQueue.Length() > 0) {
       (storageQueue.GetFirst())->Activate();
     }
   }
 
-  void EnterAdministration() {
+  void EnterAdministration(Priority_t administrationPriority) {
+    this->Priority = administrationPriority;
     while (officeWorkers->Free() < officeWorkersAmount) {
       Into(administrationQueue);
       Passivate();
     }
 
-    Enter(*officeWorkers, officeWorkersAmount);
+    TryEnter(*officeWorkers, officeWorkersAmount);
   }
 
   void LeaveAdministration() {
-    Leave(*officeWorkers, officeWorkersAmount);
+    TryLeave(*officeWorkers, officeWorkersAmount);
 
     if (administrationQueue.Length() > 0) {
       (administrationQueue.GetFirst())->Activate();
@@ -194,18 +212,16 @@ public:
   }
 };
 
-class UnloadingTruck : public VehicleProcess {
+class UnloadVehicleProcess : public VehicleProcess {
 public:
-  UnloadingTruck() : VehicleProcess(UNLOADING_TRUCK_PRIORITY, 2, 4, 1, 1, 1) {}
+  UnloadVehicleProcess(Priority_t p, int fullTimeWorkersAmount,
+                       int partTimeWorkersAmount, int rampAmount,
+                       int forkliftAmount, int officeWorkersAmount)
+      : VehicleProcess(p, fullTimeWorkersAmount, partTimeWorkersAmount,
+                       rampAmount, forkliftAmount, officeWorkersAmount) {}
 
-  void Behavior() {
-    EnterStorage();
-    Wait(1.0);
-    Leave(*fullTimeWorkers, 1);
-    trucksProcessed++;
-    LeaveStorage();
-
-    EnterAdministration();
+  void AdministerUnloadedGoods() {
+    EnterAdministration(1);
     Wait(Uniform(5, 25));
     Leave(*fullTimeWorkers, 1);
     administrationFinished++;
@@ -215,34 +231,73 @@ public:
   }
 };
 
-class UnloadingDeliveryTruck : public VehicleProcess {
+class UnloadingTruck : public UnloadVehicleProcess {
 public:
-  UnloadingDeliveryTruck() : VehicleProcess(UNLOADING_DELIVERY_TRUCK_PRIORITY
-  
-  ) {}
+  UnloadingTruck()
+      : UnloadVehicleProcess(UNLOADING_TRUCK_PRIORITY, 2, 4, 1, 1, 1) {}
+
+  void Behavior() {
+    EnterStorage();
+    Wait(Uniform(20, 40));
+    trucksProcessed++;
+    LeaveStorage(1);
+
+    AdministerUnloadedGoods();
+  }
+};
+
+class UnloadingDeliveryTruck : public UnloadVehicleProcess {
+public:
+  UnloadingDeliveryTruck()
+      : UnloadVehicleProcess(UNLOADING_DELIVERY_TRUCK_PRIORITY, 1, 2, 1, 0, 1) {
+  }
 
   void Behavior() {
 
+    EnterStorage();
+    Wait(Uniform(15, 25));
+    deliveryTrucksProcessed++;
+    LeaveStorage(0);
+
+    AdministerUnloadedGoods();
   }
 };
 
 class LoadingTruck : public VehicleProcess {
 public:
-  LoadingTruck() : VehicleProcess(LOADING_TRUCK_PRIORITY
-  
-  ) {}
+  LoadingTruck()
+      : VehicleProcess(LOADING_TRUCK_PRIORITY,
+      2, 4, 1, 1, 1) {}
 
   void Behavior() {
+    EnterStorage();
+    Wait(Uniform(20, 25));
+    deliveryTrucksProcessed++;
+    LeaveStorage();
+
+    EnterAdministration(2);
+    Wait(Exponential(10));
+    administrationFinished++;
+    LeaveAdministration();
   }
 };
 
 class LoadingDeliveryTruck : public VehicleProcess {
 public:
-  LoadingDeliveryTruck() : VehicleProcess(LOADING_DELIVERY_TRUCK_PRIORITY
-  
-  ) {}
+  LoadingDeliveryTruck()
+      : VehicleProcess(LOADING_DELIVERY_TRUCK_PRIORITY,
+      2, 4, 1, 1, 1) {      }
 
   void Behavior() {
+    EnterStorage();
+    Wait(Uniform(20, 25));
+    deliveryTrucksProcessed++;
+    LeaveStorage();
+
+    EnterAdministration(3);
+    Wait(Exponential(10));
+    administrationFinished++;
+    LeaveAdministration();
   }
 };
 
