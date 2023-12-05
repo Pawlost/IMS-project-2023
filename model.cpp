@@ -13,7 +13,7 @@
 using namespace std;
 
 #define SIMULATION_END_TIME 1000000
-#define TRUCK_ARRIVE_TIME 30
+#define TRUCK_ARRIVE_TIME 40
 
 #define UNLOADING_TRUCK_PRIORITY 2
 #define LOADING_TRUCK_PRIORITY 4
@@ -30,16 +30,30 @@ Store *forklifts;
 Queue storageQueue("Fronta ke skladu");
 Queue administrationQueue("Fronta na razítko");
 
+#define HISTOGRAM_STEP 10
+#define HISTORGRAM_NUM_OF_INTERVALS 17
+
 Stat rampWaitTime("Čekání na uvolnění rampy");
+Histogram unloadingTruckSystemTime("Náklaďák na vyskladnění - čas v systému",
+                                   HISTOGRAM_STEP, HISTOGRAM_STEP,
+                                   HISTORGRAM_NUM_OF_INTERVALS);
+Histogram
+    unloadingDeliveryTruckSystemTime("Dodávka na vyskladnění - čas v systému",
+                                     0, HISTOGRAM_STEP,
+                                     HISTORGRAM_NUM_OF_INTERVALS);
+Histogram loadingTruckSystemTime("Náklaďák na nakládku - čas v systému",
+                                 HISTOGRAM_STEP, HISTOGRAM_STEP,
+                                 HISTORGRAM_NUM_OF_INTERVALS);
+Histogram loadingDeliveryTruckSystemTime("Dodávka na nakládku - čas v systému",
+                                         HISTOGRAM_STEP, HISTOGRAM_STEP,
+                                         HISTORGRAM_NUM_OF_INTERVALS);
+Histogram storeGoodsSystemTime("Naskladnění zboží - čas v systému", 0,
+                               HISTOGRAM_STEP, 4);
 
 int loadingTrucksGenerated = 0;
 int unloadingTrucksGenerated = 0;
 int loadingDeliveryTrucksGenerated = 0;
 int unloadingDeliveryTrucksGenerated = 0;
-
-int deliveryTrucksProcessed = 0;
-int administrationFinished = 0;
-int goodsStockStored = 0;
 
 void showHelp(const char *programName) {
   cerr << "Usage: " << programName << " <option(s)>\n"
@@ -221,6 +235,7 @@ public:
   void Behavior() {
     const int partTimeWorksAmount = 2;
     const int fokliftsAmount = 1;
+    double time = Time;
     while (partTimeWorkers->Free() < partTimeWorksAmount &&
            forklifts->Free() < fokliftsAmount) {
       Into(storageQueue);
@@ -235,11 +250,8 @@ public:
     Leave(*partTimeWorkers, partTimeWorksAmount);
     Leave(*forklifts, fokliftsAmount);
 
-    goodsStockStored++;
-
-    if (storageQueue.Length() > 0) {
-      (storageQueue.GetFirst())->Activate();
-    }
+    storeGoodsSystemTime(Time - time);
+    QueueActivateFirst(storageQueue);
   }
 };
 
@@ -255,7 +267,6 @@ public:
     EnterAdministration(1);
     Wait(Uniform(5, 25));
     Leave(*fullTimeWorkers, 1);
-    administrationFinished++;
     LeaveAdministration();
 
     (new StockGoodProcess())->Activate();
@@ -268,9 +279,12 @@ public:
       : UnloadVehicleProcess(UNLOADING_TRUCK_PRIORITY, 2, 4, 1, 1, 1) {}
 
   void Behavior() {
+    double time = Time;
     EnterStorage();
     Wait(Uniform(20, 45));
     LeaveStorage(1);
+
+    unloadingTruckSystemTime(Time - time);
 
     AdministerUnloadedGoods();
   }
@@ -283,11 +297,12 @@ public:
   }
 
   void Behavior() {
-
+    double time = Time;
     EnterStorage();
     Wait(Uniform(15, 25));
-    deliveryTrucksProcessed++;
     LeaveStorage(0);
+
+    unloadingDeliveryTruckSystemTime(Time - time);
 
     AdministerUnloadedGoods();
   }
@@ -298,14 +313,14 @@ public:
   LoadingTruck() : VehicleProcess(LOADING_TRUCK_PRIORITY, 2, 4, 1, 1, 1) {}
 
   void Behavior() {
+    double time = Time;
     EnterStorage();
     Wait(Uniform(25, 35));
-    deliveryTrucksProcessed++;
     LeaveStorage();
 
     EnterAdministration(2);
     Wait(Exponential(10));
-    administrationFinished++;
+    loadingTruckSystemTime(Time - time);
     LeaveAdministration();
   }
 };
@@ -316,14 +331,14 @@ public:
       : VehicleProcess(LOADING_DELIVERY_TRUCK_PRIORITY, 2, 4, 1, 1, 1) {}
 
   void Behavior() {
+    double time = Time;
     EnterStorage();
     Wait(Uniform(20, 25));
-    deliveryTrucksProcessed++;
     LeaveStorage();
 
     EnterAdministration(3);
     Wait(Exponential(10));
-    administrationFinished++;
+    loadingDeliveryTruckSystemTime(Time - time);
     LeaveAdministration();
   }
 };
@@ -389,7 +404,8 @@ int main(int argc, char *argv[]) {
 
   Print("\n\n================== Experiment 2 ==================\n\n");
 
-  Print("\n\n================== Others ==================\n\n");
+  Print("\n\n================== Počty vygenerovaných složek "
+        "==================\n\n");
   Print("Počet vygenerovaných kamionů na vyložení: ");
   Print(unloadingTrucksGenerated);
   Print("\n");
@@ -407,9 +423,18 @@ int main(int argc, char *argv[]) {
   Print("\n");
 
   Print("Počet vozidel celkem: ");
-  Print(loadingDeliveryTrucksGenerated + unloadingTrucksGenerated + loadingTrucksGenerated + 
-  unloadingDeliveryTrucksGenerated);
+  Print(loadingDeliveryTrucksGenerated + unloadingTrucksGenerated +
+        loadingTrucksGenerated + unloadingDeliveryTrucksGenerated);
   Print("\n\n");
+
+  Print("\n\n================== Čas v systému ==================\n\n");
+  unloadingTruckSystemTime.Output();
+  unloadingDeliveryTruckSystemTime.Output();
+  loadingTruckSystemTime.Output();
+  loadingDeliveryTruckSystemTime.Output();
+  storeGoodsSystemTime.Output();
+
+  Print("\n\n================== Others ==================\n\n");
 
   fullTimeWorkers->Output();
 
