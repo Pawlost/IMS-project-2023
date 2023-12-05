@@ -4,4 +4,9 @@ set -x
 make clean
 make
 
-./model -z 10 -x 10 -y 10 -v 10 -w 10 -f "result.txt"
+# prvni mereni
+./model -z 1 -x 15 -y 30 -v 1 -w 10 -f "result1.txt"
+./model -z 2 -x 15 -y 30 -v 1 -w 10 -f "result2.txt"
+./model -z 3 -x 15 -y 30 -v 1 -w 10 -f "result3.txt"
+./model -z 4 -x 15 -y 30 -v 1 -w 10 -f "result4.txt"
+./model -z 5 -x 15 -y 30 -v 1 -w 10 -f "result5.txt"

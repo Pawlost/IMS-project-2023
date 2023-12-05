@@ -13,7 +13,7 @@
 using namespace std;
 
 #define SIMULATION_END_TIME 1000000
-#define TRUCK_ARRIVE_TIME 60
+#define TRUCK_ARRIVE_TIME 40
 
 #define UNLOADING_TRUCK_PRIORITY 2
 #define LOADING_TRUCK_PRIORITY 4
@@ -30,21 +30,38 @@ Store *forklifts;
 Queue storageQueue("Fronta ke skladu");
 Queue administrationQueue("Fronta na razítko");
 
+Stat rampWaitTime("Čekání na uvolnění rampy");
+
 int trucksProcessed = 0;
 int deliveryTrucksProcessed = 0;
 int administrationFinished = 0;
 int goodsStockStored = 0;
 
-void showHelp() {
-  cerr << "Správné použití:" << endl;
+void showHelp(const char* programName) {
+    cerr << "Usage: " << programName << " <option(s)>\n" <<
+        "Options:\n" <<
+        "\t-z / --ramps AMOUNT\t\t Amount of open ramps in the warehouse.\n" <<
+        "\t-x / --fullTimeWorkers AMOUNT\t\t Amount of Full-Time workers working inside storage.\n" <<
+        "\t-y / --partTimeWorkers AMOUNT\t\t Amount of Part-Time workers working inside storage.\n" <<
+        "\t-v / --officeWorkers AMOUNT\t\t Amount of office workers managing storage administration.\n" <<
+        "\t-w / --forklifts AMOUNT\t\t Amount of forklifts available in the storage.\n\n" <<
+        "\t[-f / --file FILENAME]\t\t Save output to the file FILENAME.\n" <<
+        "\t-h / --help\tShow this help message.\n" <<
+        "Validation:\n" <<
+        "\t RAMP AMOUNT >= 1\n" <<
+        "\t FULL-TIME WORKER AMOUNT >= 2\n" <<
+        "\t PART-TIME WORKER AMOUNT >= 4\n" <<
+        "\t OFFICE WORKER AMOUNT >= 1\n" <<
+        "\t FOKLIFT AMOUNT >= 1\n" <<
+        endl;
 
   exit(0);
 }
 
-void showHelp(const string shortName, const string longName, int minValue) {
-  cerr << "Špatný argument" << shortName << " " << longName
-       << ". Hodnota by měla začínat od " << minValue << ". ";
-  showHelp();
+void showHelp(const char* programName, const string shortName, const string longName, int minValue) {
+  cerr << "Wrong argument value " << shortName << " " << longName
+       << ". Value should start from " << minValue << ". ";
+  showHelp(programName);
 }
 
 bool findOptionString(char *start[], char *end[], const string &optionString) {
@@ -66,12 +83,12 @@ char *getOptionValue(char *start[], char *end[], const string &optionString,
   return NULL;
 }
 
-int getOptionNumber(char *start[], char *end[], const string &optionString,
+int getOptionNumber(char **start, char *end[], const string &optionString,
                     const string &optionStringLong, int minValue) {
   char *option = getOptionValue(start, end, optionString, optionStringLong);
 
   if (!option || stoi(option) < minValue) {
-    showHelp(optionString, optionStringLong, minValue);
+    showHelp(start[0], optionString, optionStringLong, minValue);
   }
 
   return stoi(option);
@@ -80,7 +97,7 @@ int getOptionNumber(char *start[], char *end[], const string &optionString,
 void parseAllArguments(char **start, char **end) {
   if (findOptionString(start, end, "-h") ||
       findOptionString(start, end, "--help")) {
-    showHelp();
+    showHelp(start[0]);
   }
   char *outputFile = getOptionValue(start, end, "-f", "--file");
   if (outputFile) {
@@ -96,11 +113,17 @@ void parseAllArguments(char **start, char **end) {
   option = getOptionNumber(start, end, "-y", "--partTimeWorkers", 4);
   partTimeWorkers = new Store("Brigádnící", option);
 
-  option = getOptionNumber(start, end, "-v", "--officialWorkers", 1);
+  option = getOptionNumber(start, end, "-v", "--officeWorkers", 1);
   officeWorkers = new Store("Úředníci", option);
 
   option = getOptionNumber(start, end, "-w", "--forklifts", 1);
   forklifts = new Store("Vysokozdvižné vozíky", option);
+}
+
+void QueueActivateFirst(Queue& q){
+    if (q.Length() > 0) {
+      (q.GetFirst())->Activate();
+    }
 }
 
 class VehicleProcess : public Process {
@@ -136,13 +159,17 @@ public:
   }
 
   void EnterStorage() {
+    double time = Time;
+
     while (fullTimeWorkers->Free() < fullTimeWorkersAmount ||
            partTimeWorkers->Free() < partTimeWorkersAmount ||
            ramps->Free() < rampAmount || forklifts->Free() < forkliftAmount) {
+            rampWaitTime(1);
       Into(storageQueue);
       Passivate();
     }
 
+    rampWaitTime(Time-time);
     TryEnter(fullTimeWorkers, fullTimeWorkersAmount);
     TryEnter(partTimeWorkers, partTimeWorkersAmount);
     TryEnter(ramps, rampAmount);
@@ -159,9 +186,7 @@ public:
     TryLeave(ramps, this->rampAmount);
     TryLeave(forklifts, this->forkliftAmount);
 
-    if (storageQueue.Length() > 0) {
-      (storageQueue.GetFirst())->Activate();
-    }
+    QueueActivateFirst(storageQueue);
   }
 
   void EnterAdministration(Priority_t administrationPriority) {
@@ -177,9 +202,7 @@ public:
   void LeaveAdministration() {
     TryLeave(*officeWorkers, officeWorkersAmount);
 
-    if (administrationQueue.Length() > 0) {
-      (administrationQueue.GetFirst())->Activate();
-    }
+    QueueActivateFirst(administrationQueue);
   }
 };
 
@@ -315,19 +338,21 @@ public:
 
       // Unloading
       if (Random() <= 0.3) {
-        (new UnloadingDeliveryTruck())->Activate();
+        (new UnloadingDeliveryTruck())->Into(storageQueue);
       } else {
-        (new UnloadingTruck())->Activate();
+        (new UnloadingTruck())->Into(storageQueue);
       }
     } else {
 
       // Loading
       if (Random() <= 0.3) {
-        (new LoadingDeliveryTruck())->Activate();
+        (new LoadingDeliveryTruck())->Into(storageQueue);
       } else {
-        (new LoadingTruck())->Activate();
+        (new LoadingTruck())->Into(storageQueue);
       }
     }
+
+    QueueActivateFirst(storageQueue);
 
     double next = Time + Exponential(TRUCK_ARRIVE_TIME);
     Activate(next);
@@ -345,14 +370,22 @@ int main(int argc, char *argv[]) {
 
   cerr << "Finished simulation, printing results" << endl;
 
+  Print("Ramp simulation \n");
   ramps->Output();
+  rampWaitTime.Output();
+  Print("Others \n");
+
   fullTimeWorkers->Output();
 
   partTimeWorkers->Output();
 
-  officialWorkers->Output();
+  officeWorkers->Output();
 
   forklifts->Output();
+
+  storageQueue.Output();
+
+  administrationQueue.Output();
 
   cerr << "Done" << endl;
   return 0;
