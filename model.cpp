@@ -13,7 +13,7 @@
 using namespace std;
 
 #define SIMULATION_END_TIME 1000000
-#define TRUCK_ARRIVE_TIME 40
+#define TRUCK_ARRIVE_TIME 30
 
 #define UNLOADING_TRUCK_PRIORITY 2
 #define LOADING_TRUCK_PRIORITY 4
@@ -34,6 +34,10 @@ Queue administrationQueue("Fronta na razítko");
 #define HISTORGRAM_NUM_OF_INTERVALS 17
 
 Stat rampWaitTime("Čekání na uvolnění rampy");
+Stat fullTimeWorkerStat("Prac. X - Průměrná doba obsluhy");
+Stat partTimeWorkerStat("Prac. Y - Průměrná doba obsluhy");
+Stat officeWorkerStat("Prac. V - Průměrná doba obsluhy");
+
 Histogram unloadingTruckSystemTime("Náklaďák na vyskladnění - čas v systému",
                                    HISTOGRAM_STEP, HISTOGRAM_STEP,
                                    HISTORGRAM_NUM_OF_INTERVALS);
@@ -54,6 +58,7 @@ int loadingTrucksGenerated = 0;
 int unloadingTrucksGenerated = 0;
 int loadingDeliveryTrucksGenerated = 0;
 int unloadingDeliveryTrucksGenerated = 0;
+long notEnoughWorkers = 0;
 
 void showHelp(const char *programName) {
   cerr << "Usage: " << programName << " <option(s)>\n"
@@ -128,25 +133,31 @@ void parseAllArguments(char **start, char **end) {
   }
 
   int option = getOptionNumber(start, end, "-z", "--ramps", 1);
-  ramps = new Store("Rampy", option);
+  ramps = new Store("Rampy - Z", option);
 
   option = getOptionNumber(start, end, "-x", "--fullTimeWorkers", 2);
-  fullTimeWorkers = new Store("Stálý pracovníci", option);
+  fullTimeWorkers = new Store("Stálý pracovníci - X", option);
 
   option = getOptionNumber(start, end, "-y", "--partTimeWorkers", 4);
-  partTimeWorkers = new Store("Brigádnící", option);
+  partTimeWorkers = new Store("Brigádnící - Y", option);
 
   option = getOptionNumber(start, end, "-v", "--officeWorkers", 1);
-  officeWorkers = new Store("Úředníci", option);
+  officeWorkers = new Store("Úředníci - V", option);
 
   option = getOptionNumber(start, end, "-w", "--forklifts", 1);
-  forklifts = new Store("Vysokozdvižné vozíky", option);
+  forklifts = new Store("Vysokozdvižné vozíky - W", option);
 }
 
 void QueueActivateFirst(Queue &q) {
   if (q.Length() > 0) {
     (q.GetFirst())->Activate();
   }
+}
+
+void MarkMultipleStatTimes(Stat& stat, double deltaTime, int amount){
+    for(int i = 0; i < amount; i++){
+        stat(deltaTime);
+    }
 }
 
 class VehicleProcess : public Process {
@@ -175,9 +186,12 @@ public:
     }
   }
 
-  void TryLeave(Store *store, int amount) {
+  void TryLeave(Store *store, int amount, Stat* stat = nullptr, double deltaTime = 0.0) {
     if (amount > 0) {
       Leave(*store, amount);
+      if(stat != nullptr){
+        MarkMultipleStatTimes(*stat, deltaTime, amount);
+      }
     }
   }
 
@@ -187,6 +201,12 @@ public:
     while (fullTimeWorkers->Free() < fullTimeWorkersAmount ||
            partTimeWorkers->Free() < partTimeWorkersAmount ||
            ramps->Free() < rampAmount || forklifts->Free() < forkliftAmount) {
+
+        if(fullTimeWorkers->Free() < fullTimeWorkersAmount ||
+           partTimeWorkers->Free() < partTimeWorkersAmount){
+            notEnoughWorkers++;
+        }
+
       Into(storageQueue);
       Passivate();
     }
@@ -198,13 +218,13 @@ public:
     TryEnter(forklifts, forkliftAmount);
   }
 
-  void LeaveStorage(int fullTimeWorkersAmountLeave = -1) {
+  void LeaveStorage(double deltaTime, int fullTimeWorkersAmountLeave = -1) {
     fullTimeWorkersAmountLeave = fullTimeWorkersAmountLeave > -1
                                      ? fullTimeWorkersAmountLeave
                                      : fullTimeWorkersAmount;
 
-    TryLeave(fullTimeWorkers, fullTimeWorkersAmountLeave);
-    TryLeave(partTimeWorkers, this->partTimeWorkersAmount);
+    TryLeave(fullTimeWorkers, fullTimeWorkersAmountLeave, &fullTimeWorkerStat, deltaTime);
+    TryLeave(partTimeWorkers, this->partTimeWorkersAmount, &partTimeWorkerStat, deltaTime);
     TryLeave(ramps, this->rampAmount);
     TryLeave(forklifts, this->forkliftAmount);
 
@@ -213,6 +233,12 @@ public:
 
   void EnterAdministration(Priority_t administrationPriority) {
     this->Priority = administrationPriority;
+
+    if(administrationQueue.Length() > 0){
+        Into(administrationQueue);
+        Passivate();
+    }
+
     while (officeWorkers->Free() < officeWorkersAmount) {
       Into(administrationQueue);
       Passivate();
@@ -221,8 +247,8 @@ public:
     TryEnter(*officeWorkers, officeWorkersAmount);
   }
 
-  void LeaveAdministration() {
-    TryLeave(*officeWorkers, officeWorkersAmount);
+  void LeaveAdministration(double deltaTime) {
+    TryLeave(*officeWorkers, officeWorkersAmount, &officeWorkerStat, deltaTime);
 
     QueueActivateFirst(administrationQueue);
   }
@@ -247,6 +273,7 @@ public:
 
     Wait(Uniform(10, 25));
 
+    MarkMultipleStatTimes(partTimeWorkerStat, Time - time, partTimeWorksAmount);
     Leave(*partTimeWorkers, partTimeWorksAmount);
     Leave(*forklifts, fokliftsAmount);
 
@@ -264,10 +291,13 @@ public:
                        rampAmount, forkliftAmount, officeWorkersAmount) {}
 
   void AdministerUnloadedGoods() {
+    double time = Time;
     EnterAdministration(1);
     Wait(Uniform(5, 25));
+    double dt = Time - time;
+    fullTimeWorkerStat(dt);
     Leave(*fullTimeWorkers, 1);
-    LeaveAdministration();
+    LeaveAdministration(dt);
 
     (new StockGoodProcess())->Activate();
   }
@@ -282,9 +312,10 @@ public:
     double time = Time;
     EnterStorage();
     Wait(Uniform(20, 45));
-    LeaveStorage(1);
 
-    unloadingTruckSystemTime(Time - time);
+    double dt = Time - time;
+    LeaveStorage(dt,1);
+    unloadingTruckSystemTime(dt);
 
     AdministerUnloadedGoods();
   }
@@ -300,7 +331,9 @@ public:
     double time = Time;
     EnterStorage();
     Wait(Uniform(15, 25));
-    LeaveStorage(0);
+    double dt = Time - time;
+    partTimeWorkerStat(dt);
+    LeaveStorage(dt, 0);
 
     unloadingDeliveryTruckSystemTime(Time - time);
 
@@ -316,12 +349,17 @@ public:
     double time = Time;
     EnterStorage();
     Wait(Uniform(25, 35));
-    LeaveStorage();
+    double dt = Time - time;
+    fullTimeWorkerStat(dt);
+    partTimeWorkerStat(dt);
+    LeaveStorage(dt);
 
     EnterAdministration(2);
     Wait(Exponential(10));
-    loadingTruckSystemTime(Time - time);
-    LeaveAdministration();
+    dt = Time - time;
+    officeWorkerStat(dt);
+    loadingTruckSystemTime(dt);
+    LeaveAdministration(dt);
   }
 };
 
@@ -334,12 +372,17 @@ public:
     double time = Time;
     EnterStorage();
     Wait(Uniform(20, 25));
-    LeaveStorage();
+    double dt = Time - time;
+    fullTimeWorkerStat(dt);
+    partTimeWorkerStat(dt);
+    LeaveStorage(dt);
 
     EnterAdministration(3);
     Wait(Exponential(10));
-    loadingDeliveryTruckSystemTime(Time - time);
-    LeaveAdministration();
+    dt = Time - time;
+    officeWorkerStat(dt);
+    loadingDeliveryTruckSystemTime(dt);
+    LeaveAdministration(dt);
   }
 };
 
@@ -404,7 +447,24 @@ int main(int argc, char *argv[]) {
 
   Print("\n\n================== Experiment 2 ==================\n\n");
 
-  Print("\n\n================== Počty vygenerovaných složek "
+  fullTimeWorkers->Output();
+  partTimeWorkers->Output();
+
+  Print("Kolikrát pro obsluhu nákladního vozidla není potřebný počet pracovníků: ");
+  Print(notEnoughWorkers);
+  Print("\n");
+
+  Print("\n\n================== Experiment 3 ==================\n\n");
+
+  fullTimeWorkerStat.Output();
+  partTimeWorkerStat.Output();
+  officeWorkerStat.Output();
+
+  Print("Počet nedokončených obsluh: ");
+  Print(storageQueue.Length() + administrationQueue.Length());
+  Print("\n");
+
+  Print("\n\n================== Počty vygenerovaných vozidel "
         "==================\n\n");
   Print("Počet vygenerovaných kamionů na vyložení: ");
   Print(unloadingTrucksGenerated);
@@ -434,11 +494,7 @@ int main(int argc, char *argv[]) {
   loadingDeliveryTruckSystemTime.Output();
   storeGoodsSystemTime.Output();
 
-  Print("\n\n================== Others ==================\n\n");
-
-  fullTimeWorkers->Output();
-
-  partTimeWorkers->Output();
+  Print("\n\n================== Ostatní ==================\n\n");
 
   officeWorkers->Output();
 
