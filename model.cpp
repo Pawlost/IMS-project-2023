@@ -13,7 +13,7 @@
 using namespace std;
 
 #define SIMULATION_END_TIME 1000000
-#define TRUCK_ARRIVE_TIME 40
+#define TRUCK_ARRIVE_TIME 30
 
 #define UNLOADING_TRUCK_PRIORITY 2
 #define LOADING_TRUCK_PRIORITY 4
@@ -32,33 +32,42 @@ Queue administrationQueue("Fronta na razítko");
 
 Stat rampWaitTime("Čekání na uvolnění rampy");
 
-int trucksProcessed = 0;
+int loadingTrucksGenerated = 0;
+int unloadingTrucksGenerated = 0;
+int loadingDeliveryTrucksGenerated = 0;
+int unloadingDeliveryTrucksGenerated = 0;
+
 int deliveryTrucksProcessed = 0;
 int administrationFinished = 0;
 int goodsStockStored = 0;
 
-void showHelp(const char* programName) {
-    cerr << "Usage: " << programName << " <option(s)>\n" <<
-        "Options:\n" <<
-        "\t-z / --ramps AMOUNT\t\t Amount of open ramps in the warehouse.\n" <<
-        "\t-x / --fullTimeWorkers AMOUNT\t\t Amount of Full-Time workers working inside storage.\n" <<
-        "\t-y / --partTimeWorkers AMOUNT\t\t Amount of Part-Time workers working inside storage.\n" <<
-        "\t-v / --officeWorkers AMOUNT\t\t Amount of office workers managing storage administration.\n" <<
-        "\t-w / --forklifts AMOUNT\t\t Amount of forklifts available in the storage.\n\n" <<
-        "\t[-f / --file FILENAME]\t\t Save output to the file FILENAME.\n" <<
-        "\t-h / --help\tShow this help message.\n" <<
-        "Validation:\n" <<
-        "\t RAMP AMOUNT >= 1\n" <<
-        "\t FULL-TIME WORKER AMOUNT >= 2\n" <<
-        "\t PART-TIME WORKER AMOUNT >= 4\n" <<
-        "\t OFFICE WORKER AMOUNT >= 1\n" <<
-        "\t FOKLIFT AMOUNT >= 1\n" <<
-        endl;
+void showHelp(const char *programName) {
+  cerr << "Usage: " << programName << " <option(s)>\n"
+       << "Options:\n"
+       << "\t-z / --ramps AMOUNT\t\t Amount of open ramps in the warehouse.\n"
+       << "\t-x / --fullTimeWorkers AMOUNT\t\t Amount of Full-Time workers "
+          "working inside storage.\n"
+       << "\t-y / --partTimeWorkers AMOUNT\t\t Amount of Part-Time workers "
+          "working inside storage.\n"
+       << "\t-v / --officeWorkers AMOUNT\t\t Amount of office workers managing "
+          "storage administration.\n"
+       << "\t-w / --forklifts AMOUNT\t\t Amount of forklifts available in the "
+          "storage.\n\n"
+       << "\t[-f / --file FILENAME]\t\t Save output to the file FILENAME.\n"
+       << "\t-h / --help\tShow this help message.\n"
+       << "Validation:\n"
+       << "\t RAMP AMOUNT >= 1\n"
+       << "\t FULL-TIME WORKER AMOUNT >= 2\n"
+       << "\t PART-TIME WORKER AMOUNT >= 4\n"
+       << "\t OFFICE WORKER AMOUNT >= 1\n"
+       << "\t FOKLIFT AMOUNT >= 1\n"
+       << endl;
 
   exit(0);
 }
 
-void showHelp(const char* programName, const string shortName, const string longName, int minValue) {
+void showHelp(const char *programName, const string shortName,
+              const string longName, int minValue) {
   cerr << "Wrong argument value " << shortName << " " << longName
        << ". Value should start from " << minValue << ". ";
   showHelp(programName);
@@ -120,10 +129,10 @@ void parseAllArguments(char **start, char **end) {
   forklifts = new Store("Vysokozdvižné vozíky", option);
 }
 
-void QueueActivateFirst(Queue& q){
-    if (q.Length() > 0) {
-      (q.GetFirst())->Activate();
-    }
+void QueueActivateFirst(Queue &q) {
+  if (q.Length() > 0) {
+    (q.GetFirst())->Activate();
+  }
 }
 
 class VehicleProcess : public Process {
@@ -164,12 +173,11 @@ public:
     while (fullTimeWorkers->Free() < fullTimeWorkersAmount ||
            partTimeWorkers->Free() < partTimeWorkersAmount ||
            ramps->Free() < rampAmount || forklifts->Free() < forkliftAmount) {
-            rampWaitTime(1);
       Into(storageQueue);
       Passivate();
     }
 
-    rampWaitTime(Time-time);
+    rampWaitTime(Time - time);
     TryEnter(fullTimeWorkers, fullTimeWorkersAmount);
     TryEnter(partTimeWorkers, partTimeWorkersAmount);
     TryEnter(ramps, rampAmount);
@@ -261,8 +269,7 @@ public:
 
   void Behavior() {
     EnterStorage();
-    Wait(Uniform(20, 40));
-    trucksProcessed++;
+    Wait(Uniform(20, 45));
     LeaveStorage(1);
 
     AdministerUnloadedGoods();
@@ -288,13 +295,11 @@ public:
 
 class LoadingTruck : public VehicleProcess {
 public:
-  LoadingTruck()
-      : VehicleProcess(LOADING_TRUCK_PRIORITY,
-      2, 4, 1, 1, 1) {}
+  LoadingTruck() : VehicleProcess(LOADING_TRUCK_PRIORITY, 2, 4, 1, 1, 1) {}
 
   void Behavior() {
     EnterStorage();
-    Wait(Uniform(20, 25));
+    Wait(Uniform(25, 35));
     deliveryTrucksProcessed++;
     LeaveStorage();
 
@@ -308,8 +313,7 @@ public:
 class LoadingDeliveryTruck : public VehicleProcess {
 public:
   LoadingDeliveryTruck()
-      : VehicleProcess(LOADING_DELIVERY_TRUCK_PRIORITY,
-      2, 4, 1, 1, 1) {      }
+      : VehicleProcess(LOADING_DELIVERY_TRUCK_PRIORITY, 2, 4, 1, 1, 1) {}
 
   void Behavior() {
     EnterStorage();
@@ -339,16 +343,20 @@ public:
       // Unloading
       if (Random() <= 0.3) {
         (new UnloadingDeliveryTruck())->Into(storageQueue);
+        unloadingDeliveryTrucksGenerated++;
       } else {
         (new UnloadingTruck())->Into(storageQueue);
+        unloadingTrucksGenerated++;
       }
     } else {
 
       // Loading
       if (Random() <= 0.3) {
         (new LoadingDeliveryTruck())->Into(storageQueue);
+        loadingDeliveryTrucksGenerated++;
       } else {
         (new LoadingTruck())->Into(storageQueue);
+        loadingTrucksGenerated++;
       }
     }
 
@@ -362,6 +370,11 @@ public:
 int main(int argc, char *argv[]) {
   parseAllArguments(argv, argv + argc);
 
+  for (int i = 0; i < argc; i++) {
+    Print(argv[i]);
+  }
+  Print("\n");
+
   Init(0, SIMULATION_END_TIME); // Initialize simulation
 
   (new VehicleGenerator())->Activate();
@@ -370,10 +383,33 @@ int main(int argc, char *argv[]) {
 
   cerr << "Finished simulation, printing results" << endl;
 
-  Print("Ramp simulation \n");
+  Print("\n================== Experiment 1 ==================\n\n");
   ramps->Output();
   rampWaitTime.Output();
-  Print("Others \n");
+
+  Print("\n\n================== Experiment 2 ==================\n\n");
+
+  Print("\n\n================== Others ==================\n\n");
+  Print("Počet vygenerovaných kamionů na vyložení: ");
+  Print(unloadingTrucksGenerated);
+  Print("\n");
+
+  Print("Počet vygenerovaných kamionů na naložení: ");
+  Print(loadingTrucksGenerated);
+  Print("\n");
+
+  Print("Počet vygenerovaných dodávek na vyložení: ");
+  Print(unloadingDeliveryTrucksGenerated);
+  Print("\n");
+
+  Print("Počet vygenerovaných dodávek na naložení: ");
+  Print(loadingDeliveryTrucksGenerated);
+  Print("\n");
+
+  Print("Počet vozidel celkem: ");
+  Print(loadingDeliveryTrucksGenerated + unloadingTrucksGenerated + loadingTrucksGenerated + 
+  unloadingDeliveryTrucksGenerated);
+  Print("\n\n");
 
   fullTimeWorkers->Output();
 
