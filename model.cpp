@@ -57,6 +57,7 @@ Histogram storeGoodsSystemTime("Naskladnění zboží - čas v systému", 0,
 Histogram *partTimeWorkersHistogram;
 Histogram *fullTimeWorkersHistogram;
 Histogram *officeWorkersHistogram;
+Histogram *forkliftsHistogram;
 
 int loadingTrucksGenerated = 0;
 int unloadingTrucksGenerated = 0;
@@ -142,20 +143,22 @@ void parseAllArguments(char **start, char **end) {
   option = getOptionNumber(start, end, "-x", "--fullTimeWorkers", 2);
   fullTimeWorkers = new Store("Stálý pracovníci - X", option);
   fullTimeWorkersHistogram =
-      new Histogram("Histogram stálých pracovníků - X", 1, 1, option);
+      new Histogram("Stálý pracovníci - X", 1, 1, option);
 
   option = getOptionNumber(start, end, "-y", "--partTimeWorkers", 4);
   partTimeWorkers = new Store("Brigádnící - Y", option);
   partTimeWorkersHistogram =
-      new Histogram("Histogram brigádníků - Y", 1, 1, option);
+      new Histogram("Brigádníci - Y", 1, 1, option);
 
   option = getOptionNumber(start, end, "-v", "--officeWorkers", 1);
   officeWorkers = new Store("Úředníci - V", option);
   officeWorkersHistogram =
-      new Histogram("Histogram úředníků - V", 1, 1, option);
+      new Histogram("Úředníci - V", 1, 1, option);
 
   option = getOptionNumber(start, end, "-w", "--forklifts", 1);
   forklifts = new Store("Vysokozdvižné vozíky - W", option);
+  forkliftsHistogram = 
+      new Histogram("Vysokozdvižné vozíky - W", 1, 1, option);
 }
 
 void QueueActivateFirst(Queue &q) {
@@ -230,7 +233,7 @@ public:
     TryEnter(fullTimeWorkers, fullTimeWorkersAmount, fullTimeWorkersHistogram);
     TryEnter(partTimeWorkers, partTimeWorkersAmount, partTimeWorkersHistogram);
     TryEnter(ramps, rampAmount);
-    TryEnter(forklifts, forkliftAmount);
+    TryEnter(forklifts, forkliftAmount, forkliftsHistogram);
   }
 
   void LeaveStorage(double deltaTime, int fullTimeWorkersAmountLeave = -1) {
@@ -307,7 +310,6 @@ public:
     LeaveAdministration(dt);
 
     (new StockGoodProcess())->Into(storageQueue);
-
     QueueActivateFirst(storageQueue);
   }
 };
@@ -474,6 +476,7 @@ int main(int argc, char *argv[]) {
   officeWorkerStat.Output();
 
   officeWorkersHistogram->Output();
+  forkliftsHistogram->Output();
 
   Print("Počet nedokončených obsluh: ");
   Print(storageQueue.Length() + administrationQueue.Length());
