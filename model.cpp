@@ -37,6 +37,7 @@ Stat rampWaitTime("Čekání na uvolnění rampy");
 Stat fullTimeWorkerStat("Prac. X - Průměrná doba obsluhy");
 Stat partTimeWorkerStat("Prac. Y - Průměrná doba obsluhy");
 Stat officeWorkerStat("Prac. V - Průměrná doba obsluhy");
+Stat forkliftStat("W - Průměrná doba obsluhy");
 
 Histogram unloadingTruckSystemTime("Náklaďák na vyskladnění - čas v systému",
                                    HISTOGRAM_STEP, HISTOGRAM_STEP,
@@ -246,7 +247,7 @@ public:
     TryLeave(partTimeWorkers, this->partTimeWorkersAmount, &partTimeWorkerStat,
              deltaTime);
     TryLeave(ramps, this->rampAmount);
-    TryLeave(forklifts, this->forkliftAmount);
+    TryLeave(forklifts, this->forkliftAmount, &forkliftStat, deltaTime);
 
     QueueActivateFirst(storageQueue);
   }
@@ -477,6 +478,7 @@ int main(int argc, char *argv[]) {
 
   officeWorkersHistogram->Output();
   forkliftsHistogram->Output();
+  forkliftStat.Output();
 
   Print("Počet nedokončených obsluh: ");
   Print(storageQueue.Length() + administrationQueue.Length());
